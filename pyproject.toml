@@ -66,6 +66,7 @@ disallow_incomplete_defs = true
 
 [tool.flake8]
 max-line-length = 100
+extend-ignore = "E203,W293"
 exclude = [".git", "__pycache__", "build", "dist"]
 
 [tool.hatch.build.targets.wheel]
