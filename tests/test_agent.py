@@ -5,8 +5,8 @@ import pytest
 
 load_dotenv()
 
-# Load multiple API keys
-api_keys = os.getenv("GEMINI_APIs").split(",")
+# Load multiple API keys with fallback
+api_keys = os.getenv("GEMINI_APIs", "dummy-key").split(",")
 current_key_idx = 0
 
 def get_current_api_key():
@@ -39,7 +39,6 @@ agent = Agent(api_key=get_current_api_key(), tools=[multiply, add])
 
 # Define a wrapper to rotate API key AFTER the call
 def agent_prompt_with_key_rotation(agent,*args, **kwargs):
-    # global agent
     print(f"🚀 [DEBUG] Using API key index {current_key_idx}: {agent.api_key[:10]}...")
     response = agent.prompt(*args, **kwargs)
     switch_to_next_api_key()
