@@ -100,7 +100,8 @@ class Agent:
             tool_name = func.__name__
             if tool_name not in Agent._tools_registry:
                 print(
-                    f"Warning: Function '{tool_name}' was passed but has no @Agent decorators. Skipping."
+                    f"Warning: Function '{tool_name}' was passed "
+                    "but has no @Agent decorators. Skipping."
                 )
                 continue
 
