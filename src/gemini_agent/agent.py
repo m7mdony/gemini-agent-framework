@@ -2,7 +2,7 @@ import inspect
 import json
 from datetime import datetime
 from functools import wraps
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Type, Union, Collection
 
 import requests
 from dotenv import load_dotenv
@@ -11,7 +11,7 @@ load_dotenv()
 
 
 class Agent:
-    PYTHON_TO_GEMINI_TYPE_MAP = {
+    PYTHON_TO_GEMINI_TYPE_MAP: Dict[Type, str] = {
         str: "STRING",
         int: "INTEGER",
         float: "NUMBER",
@@ -21,15 +21,15 @@ class Agent:
     }
     _tools_registry: Dict[str, Dict[str, Any]] = {}  # Class-level registry
 
-    def get_gemini_type(self, py_type: type) -> str:
+    def get_gemini_type(self, py_type: Type) -> str:
         """Maps Python types to Gemini JSON schema types."""
         return self.PYTHON_TO_GEMINI_TYPE_MAP.get(py_type, "STRING")  # Default to STRING if unknown
 
     @staticmethod
-    def description(desc: str):
+    def description(desc: str) -> Callable:
         """Decorator to add a description to a tool function."""
 
-        def decorator(func):
+        def decorator(func: Callable) -> Callable:
             if func.__name__ not in Agent._tools_registry:
                 Agent._tools_registry[func.__name__] = {}
             Agent._tools_registry[func.__name__]["description"] = desc
@@ -38,7 +38,7 @@ class Agent:
             Agent._tools_registry[func.__name__]["is_method"] = inspect.ismethod(func)
 
             @wraps(func)
-            def wrapper(*args, **kwargs):
+            def wrapper(*args: Any, **kwargs: Any) -> Any:
                 return func(*args, **kwargs)
 
             return wrapper
@@ -46,10 +46,10 @@ class Agent:
         return decorator
 
     @staticmethod
-    def parameters(params: Dict[str, Dict[str, Any]]):
+    def parameters(params: Dict[str, Dict[str, Any]]) -> Callable:
         """Decorator to define parameters for a tool function."""
 
-        def decorator(func):
+        def decorator(func: Callable) -> Callable:
             if func.__name__ not in Agent._tools_registry:
                 Agent._tools_registry[func.__name__] = {}
             Agent._tools_registry[func.__name__]["parameters_def"] = params
@@ -60,7 +60,7 @@ class Agent:
             Agent._tools_registry[func.__name__]["is_method"] = inspect.ismethod(func)
 
             @wraps(func)
-            def wrapper(*args, **kwargs):
+            def wrapper(*args: Any, **kwargs: Any) -> Any:
                 return func(*args, **kwargs)
 
             return wrapper
@@ -68,8 +68,8 @@ class Agent:
         return decorator
 
     def __init__(
-        self, api_key: str, tools: List[Callable] = None, model_name: str = "gemini-1.5-flash"
-    ):
+        self, api_key: str, tools: Optional[List[Callable[..., Any]]] = None, model_name: str = "gemini-1.5-flash"
+    ) -> None:
         """
         Initializes the Agent using REST API calls.
 
@@ -86,7 +86,7 @@ class Agent:
         self.headers = {"Content-Type": "application/json"}
 
         self._registered_tools_json: List[Dict[str, Any]] = []  # Store JSON representation
-        self._tool_functions: Dict[str, Callable] = {}  # Map name to actual function
+        self._tool_functions: Dict[str, Callable[..., Any]] = {}  # Map name to actual function
         self._tool_instances: Dict[str, Any] = {}  # Store instances for class methods
         self._intermediate_results: Dict[str, Any] = {}  # Store intermediate results
         self._stored_variables: Dict[str, Dict[str, Any]] = {}  # Store variables with metadata
@@ -94,7 +94,7 @@ class Agent:
         if tools:
             self._process_tools(tools)
 
-    def _process_tools(self, tools: List[Callable]):
+    def _process_tools(self, tools: List[Callable[..., Any]]) -> None:
         """Converts decorated Python functions into the JSON format for the REST API."""
         for func in tools:
             tool_name = func.__name__
@@ -154,8 +154,8 @@ class Agent:
             self._registered_tools_json.append(declaration_json)
 
     def set_variable(
-        self, name: str, value: Any, description: str = "", type_hint: type = None
-    ) -> None:
+        self, name: str, value: Any, description: str = "", type_hint: Optional[Type] = None
+    ) -> str:
         """
         Stores a variable in the agent's memory with metadata.
         If a variable with the same name exists, creates a new variable with a counter suffix.
@@ -165,6 +165,9 @@ class Agent:
             value: The actual value to store
             description: A description of what the variable represents
             type_hint: Optional type hint for the variable
+
+        Returns:
+            The name of the stored variable
         """
         # Check if the base name exists
         if name in self._stored_variables:
@@ -275,47 +278,28 @@ class Agent:
         )
 
     def _substitute_variables(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Substitutes stored variable values in function arguments.
-
-        Args:
-            args: Dictionary of argument names to values
-
-        Returns:
-            Dictionary with variable values substituted where applicable
-        """
-        substituted_args = {}
-        for name, value in args.items():
-            if isinstance(value, dict) and "variable" in value:
-                var_name = value["variable"]
+        """Substitutes variable references in arguments with their actual values."""
+        result = {}
+        for key, value in args.items():
+            if isinstance(value, str) and value.startswith("$"):
+                var_name = value[1:]
                 if var_name in self._stored_variables:
-                    substituted_args[name] = self._stored_variables[var_name]["value"]
+                    result[key] = self._stored_variables[var_name]["value"]
                 else:
-                    substituted_args[name] = value
+                    result[key] = value
             else:
-                substituted_args[name] = value
-        return substituted_args
+                result[key] = value
+        return result
 
     def _call_gemini_api(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Makes a POST request to the Gemini generateContent endpoint."""
-        api_url = f"{self.base_url}:generateContent?key={self.api_key}"
-        try:
-            response = requests.post(api_url, headers=self.headers, json=payload)
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.RequestException as e:
-            print(f"Error calling Gemini API: {e}")
-            error_message = f"API Request Error: {e}"
-            if hasattr(e, "response") and e.response is not None:
-                try:
-                    error_details = e.response.json()
-                    error_message += f"\nDetails: {json.dumps(error_details)}"
-                except json.JSONDecodeError:
-                    error_message += f"\nResponse Body: {e.response.text}"
-            return {"error": {"message": error_message}}
-        except json.JSONDecodeError as e:
-            print(f"Error decoding Gemini API JSON response: {e}")
-            return {"error": {"message": f"JSON Decode Error: {e}"}}
+        """Makes a call to the Gemini API."""
+        response = requests.post(
+            f"{self.base_url}:generateContent?key={self.api_key}",
+            headers=self.headers,
+            json=payload,
+        )
+        response.raise_for_status()
+        return response.json()
 
     def prompt(
         self,
@@ -325,17 +309,16 @@ class Agent:
         conversation_history: Optional[List[Dict[str, Any]]] = None,
     ) -> Any:
         """
-        Sends a prompt via REST API, handles function calling, and respects response structure.
+        Sends a prompt to the Gemini model and processes the response.
 
         Args:
-            user_prompt: The user's message.
-            system_prompt: An optional system instruction (prepended to history).
-            response_structure: An optional OpenAPI schema dict for desired output format.
-            conversation_history: Optional list of content dicts (e.g., [{'role':'user', 'parts':...}])
+            user_prompt: The user's input prompt
+            system_prompt: Optional system prompt to override the default
+            response_structure: Optional structure to enforce on the response
+            conversation_history: Optional list of previous conversation turns
 
         Returns:
-            The model's final response (string or dict/list if structured),
-            or a dictionary containing an 'error' key if something failed.
+            The model's response, processed according to the response structure if provided
         """
         self._intermediate_results = {}
 
