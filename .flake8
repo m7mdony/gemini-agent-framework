@@ -1,5 +1,5 @@
 [flake8]
-max-line-length = 100
+max-line-length = 200
 extend-ignore = E203,W293
 exclude = .git,__pycache__,build,dist
 per-file-ignores =
