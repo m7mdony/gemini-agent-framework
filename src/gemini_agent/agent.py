@@ -1,0 +1,512 @@
+import requests
+import json
+import inspect
+from functools import wraps
+from typing import List, Callable, Dict, Any, Optional
+from dotenv import load_dotenv
+from datetime import datetime
+
+load_dotenv()
+
+class Agent:
+    PYTHON_TO_GEMINI_TYPE_MAP = {
+        str: "STRING",
+        int: "INTEGER",
+        float: "NUMBER",
+        bool: "BOOLEAN",
+        list: "ARRAY",
+        dict: "OBJECT",
+    }
+    _tools_registry: Dict[str, Dict[str, Any]] = {}  # Class-level registry
+
+    def get_gemini_type(self, py_type: type) -> str:
+        """Maps Python types to Gemini JSON schema types."""
+        return self.PYTHON_TO_GEMINI_TYPE_MAP.get(py_type, "STRING")  # Default to STRING if unknown
+
+    @staticmethod
+    def description(desc: str):
+        """Decorator to add a description to a tool function."""
+        def decorator(func):
+            if func.__name__ not in Agent._tools_registry:
+                Agent._tools_registry[func.__name__] = {}
+            Agent._tools_registry[func.__name__]['description'] = desc
+            Agent._tools_registry[func.__name__]['signature'] = inspect.signature(func)
+            Agent._tools_registry[func.__name__]['function_ref'] = func
+            Agent._tools_registry[func.__name__]['is_method'] = inspect.ismethod(func)
+            @wraps(func)
+            def wrapper(*args, **kwargs):
+                return func(*args, **kwargs)
+            return wrapper
+        return decorator
+
+    @staticmethod
+    def parameters(params: Dict[str, Dict[str, Any]]):
+        """Decorator to define parameters for a tool function."""
+        def decorator(func):
+            if func.__name__ not in Agent._tools_registry:
+                Agent._tools_registry[func.__name__] = {}
+            Agent._tools_registry[func.__name__]['parameters_def'] = params
+            if 'signature' not in Agent._tools_registry[func.__name__]:
+                Agent._tools_registry[func.__name__]['signature'] = inspect.signature(func)
+            if 'function_ref' not in Agent._tools_registry[func.__name__]:
+                Agent._tools_registry[func.__name__]['function_ref'] = func
+            Agent._tools_registry[func.__name__]['is_method'] = inspect.ismethod(func)
+            @wraps(func)
+            def wrapper(*args, **kwargs):
+                return func(*args, **kwargs)
+            return wrapper
+        return decorator
+
+    def __init__(self, api_key: str, tools: List[Callable] = None, model_name: str = "gemini-1.5-flash"):
+        """
+        Initializes the Agent using REST API calls.
+
+        Args:
+            api_key: Your Google Generative AI API key.
+            tools: A list of Python functions or class methods decorated as tools.
+            model_name: The name of the Gemini model to use.
+        """
+        if not api_key:
+            raise ValueError("API key is required.")
+        self.api_key = api_key
+        self.model_name = model_name
+        self.base_url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model_name}"
+        self.headers = {'Content-Type': 'application/json'}
+
+        self._registered_tools_json: List[Dict[str, Any]] = []  # Store JSON representation
+        self._tool_functions: Dict[str, Callable] = {}  # Map name to actual function
+        self._tool_instances: Dict[str, Any] = {}  # Store instances for class methods
+        self._intermediate_results: Dict[str, Any] = {}  # Store intermediate results
+        self._stored_variables: Dict[str, Dict[str, Any]] = {}  # Store variables with metadata
+
+        if tools:
+            self._process_tools(tools)
+
+    def _process_tools(self, tools: List[Callable]):
+        """Converts decorated Python functions into the JSON format for the REST API."""
+        for func in tools:
+            tool_name = func.__name__
+            if tool_name not in Agent._tools_registry:
+                print(f"Warning: Function '{tool_name}' was passed but has no @Agent decorators. Skipping.")
+                continue
+
+            metadata = Agent._tools_registry[tool_name]
+            if 'description' not in metadata:
+                print(f"Warning: Function '{tool_name}' is missing @Agent.description. Skipping.")
+                continue
+
+            # Store the bound method directly if it's a class method
+            if inspect.ismethod(func):
+                self._tool_functions[tool_name] = func
+            else:
+                self._tool_functions[tool_name] = metadata['function_ref']
+
+            # Build the parameters schema JSON
+            gemini_params_schema = {
+                "type": "OBJECT",
+                "properties": {},
+                "required": []
+            }
+            params_def = metadata.get('parameters_def', {})
+            signature = metadata.get('signature')  # inspect.signature object
+
+            if not params_def and signature:
+                params_def = {}
+                for name, param in signature.parameters.items():
+                    # Skip 'self' parameter for class methods
+                    if name == 'self' and inspect.ismethod(func):
+                        continue
+                    py_type = param.annotation if param.annotation != inspect.Parameter.empty else str
+                    params_def[name] = {'type': py_type, 'description': f'Parameter {name}'}
+
+            for name, definition in params_def.items():
+                py_type = definition.get('type', str)
+                gemini_type = self.get_gemini_type(py_type)
+                gemini_params_schema["properties"][name] = {
+                    "type": gemini_type,
+                    "description": definition.get('description', '')
+                }
+                if signature and signature.parameters[name].default == inspect.Parameter.empty:
+                    gemini_params_schema["required"].append(name)
+
+            # Create the Function Declaration JSON dictionary
+            declaration_json = {
+                "name": tool_name,
+                "description": metadata['description'],
+                "parameters": gemini_params_schema if gemini_params_schema["properties"] else None
+            }
+            if declaration_json["parameters"] is None:
+                del declaration_json["parameters"]
+
+            self._registered_tools_json.append(declaration_json)
+
+    def set_variable(self, name: str, value: Any, description: str = "", type_hint: type = None) -> None:
+        """
+        Stores a variable in the agent's memory with metadata.
+        If a variable with the same name exists, creates a new variable with a counter suffix.
+
+        Args:
+            name: The name of the variable
+            value: The actual value to store
+            description: A description of what the variable represents
+            type_hint: Optional type hint for the variable
+        """
+        # Check if the base name exists
+        if name in self._stored_variables:
+            # Find all variables that start with the base name
+            existing_vars = [var_name for var_name in self._stored_variables.keys() 
+                           if var_name.startswith(name + '_') or var_name == name]
+            
+            # Find the highest counter used
+            max_counter = 0
+            for var_name in existing_vars:
+                if var_name == name:
+                    max_counter = max(max_counter, 1)
+                else:
+                    try:
+                        counter = int(var_name.split('_')[-1])
+                        max_counter = max(max_counter, counter)
+                    except ValueError:
+                        continue
+            
+            # Create new name with incremented counter
+            new_name = f"{name}_{max_counter + 1}"
+            print(f"Variable '{name}' already exists. Creating new variable '{new_name}'")
+            name = new_name
+        
+        self._stored_variables[name] = {
+            'value': value,
+            'description': description,
+            'type': type_hint or type(value).__name__,
+            'created_at': datetime.now().isoformat()
+        }
+
+        return name
+
+    def get_variable(self, name: str) -> Any:
+        """
+        Retrieves a stored variable's value.
+
+        Args:
+            name: The name of the variable to retrieve
+
+        Returns:
+            The stored value or None if not found
+        """
+        return self._stored_variables.get(name, {}).get('value')
+
+    def list_variables(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Returns information about all stored variables.
+
+        Returns:
+            Dictionary of variable names to their metadata
+        """
+        return {name: {k: v for k, v in data.items() if k != 'value'} 
+                for name, data in self._stored_variables.items()}
+
+    def _get_system_prompt(self) -> str:
+        """Returns a system prompt that guides the model in breaking down complex operations."""
+        variables_info = "\n".join([
+            f"- {name}: {data['description']} (Type: {data['type']})"
+            for name, data in self._stored_variables.items()
+        ])
+        
+        return """You are an AI assistant that can break down complex tasks into sequential steps using available tools.
+        When faced with a complex request:
+        1. Analyze the request to identify which tools can be used
+        2. Break down the request into sequential steps
+        3. For each step:
+           - Use the most appropriate tool
+           - Store the result for use in subsequent steps
+        4. Combine the results to provide a final answer
+        
+        Available tools:
+        {tools_list}
+        
+        Available variables:
+        {variables_list}
+        
+        IMPORTANT - Variable Usage:
+        When you need to use a stored variable in a function call, you MUST use the following syntax:
+        - For function arguments: {{"variable": "variable_name"}}
+        - For example, if you want to use the 'current_user' variable in a function call:
+          {{"user_id": {{"variable": "current_user"}}}}
+        
+        Remember:
+        - Always perform one operation at a time
+        - Use intermediate results from previous steps
+        - If a step requires multiple tools, execute them sequentially
+        - If you're unsure about the next step, explain your reasoning
+        - You can use both stored variables and values from the prompt
+        - When using stored variables, ALWAYS use the {{"variable": "variable_name"}} syntax
+        """.format(
+            tools_list="\n".join([f"- {name}: {desc}" for name, desc in 
+                [(tool['name'], tool['description']) for tool in self._registered_tools_json]]),
+            variables_list=variables_info
+        )
+
+    def _substitute_variables(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Substitutes stored variable values in function arguments.
+
+        Args:
+            args: Dictionary of argument names to values
+
+        Returns:
+            Dictionary with variable values substituted where applicable
+        """
+        substituted_args = {}
+        for name, value in args.items():
+            if isinstance(value, dict) and "variable" in value:
+                var_name = value["variable"]
+                if var_name in self._stored_variables:
+                    substituted_args[name] = self._stored_variables[var_name]['value']
+                else:
+                    substituted_args[name] = value
+            else:
+                substituted_args[name] = value
+        return substituted_args
+
+    def _call_gemini_api(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Makes a POST request to the Gemini generateContent endpoint."""
+        api_url = f"{self.base_url}:generateContent?key={self.api_key}"
+        try:
+            response = requests.post(api_url, headers=self.headers, json=payload)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            print(f"Error calling Gemini API: {e}")
+            error_message = f"API Request Error: {e}"
+            if hasattr(e, 'response') and e.response is not None:
+                try:
+                    error_details = e.response.json()
+                    error_message += f"\nDetails: {json.dumps(error_details)}"
+                except json.JSONDecodeError:
+                    error_message += f"\nResponse Body: {e.response.text}"
+            return {"error": {"message": error_message}}
+        except json.JSONDecodeError as e:
+            print(f"Error decoding Gemini API JSON response: {e}")
+            return {"error": {"message": f"JSON Decode Error: {e}"}}
+
+    def prompt(self,
+               user_prompt: str,
+               system_prompt: Optional[str] = None,
+               response_structure: Optional[Dict[str, Any]] = None,
+               conversation_history: Optional[List[Dict[str, Any]]] = None
+               ) -> Any:
+        """
+        Sends a prompt via REST API, handles function calling, and respects response structure.
+
+        Args:
+            user_prompt: The user's message.
+            system_prompt: An optional system instruction (prepended to history).
+            response_structure: An optional OpenAPI schema dict for desired output format.
+            conversation_history: Optional list of content dicts (e.g., [{'role':'user', 'parts':...}])
+
+        Returns:
+            The model's final response (string or dict/list if structured),
+            or a dictionary containing an 'error' key if something failed.
+        """
+        self._intermediate_results = {}
+        
+        if not system_prompt:
+            system_prompt = self._get_system_prompt()
+        else:
+            system_prompt = self._get_system_prompt() + system_prompt
+
+        current_contents = conversation_history if conversation_history else []
+        if system_prompt and not current_contents:
+            current_contents.append({'role': 'user', 'parts': [{'text': system_prompt}]})
+            current_contents.append({'role': 'model', 'parts': [{'text': "I understand I should break down complex tasks into sequential steps using the available tools and variables."}]})
+
+        current_contents.append({'role': 'user', 'parts': [{'text': user_prompt}]})
+        payload: Dict[str, Any] = {"contents": current_contents}
+
+        if self._registered_tools_json:
+            payload["tools"] = [{"functionDeclarations": self._registered_tools_json}]
+            payload["toolConfig"] = {"functionCallingConfig": {"mode": "AUTO"}}
+
+        apply_structure_later = bool(response_structure) and bool(self._registered_tools_json)
+        final_response_schema = None
+        final_mime_type = None
+
+        if response_structure and not self._registered_tools_json:
+            apply_structure_later = False
+            # If response_structure is a string type, make it more flexible
+            if response_structure.get("type") == "string":
+                response_structure = {
+                    "type": ["string", "object"],
+                    "properties": {
+                        "value": {"type": "string"}
+                    }
+                }
+            payload["generationConfig"] = {
+                "response_mime_type": "application/json",
+                "response_schema": response_structure
+            }
+            final_mime_type = "application/json"
+            final_response_schema = response_structure
+     
+        while True:
+          
+            
+            response_data = self._call_gemini_api(payload)
+            if "error" in response_data:
+                print(f"API call failed: {response_data['error'].get('message', 'Unknown API error')}")
+                return response_data
+
+            if not response_data.get("candidates"):
+                feedback = response_data.get("promptFeedback")
+                block_reason = feedback.get("blockReason") if feedback else "Unknown"
+                safety_ratings = feedback.get("safetyRatings") if feedback else []
+                error_msg = f"Request blocked by API. Reason: {block_reason}."
+                if safety_ratings:
+                    error_msg += f" Details: {json.dumps(safety_ratings)}"
+                print(error_msg)
+                return {"error": {"message": error_msg, "details": feedback}}
+
+            try:
+                candidate = response_data["candidates"][0]
+                content = candidate["content"]
+                
+                for part in content["parts"]:
+                    payload["contents"].append({"role": "model", "parts": [part]})
+                    
+                    if "functionCall" in part:
+                        fc = part["functionCall"]
+                        tool_name = fc["name"]
+                        args = fc.get("args", {})
+
+                        if tool_name not in self._tool_functions:
+                            error_msg = f"Model attempted to call unknown function '{tool_name}'."
+                            print(f"Error: {error_msg}")
+                            error_response_part = {
+                                "functionResponse": {
+                                    "name": tool_name,
+                                    "response": {"error": error_msg}
+                                }
+                            }
+                            payload["contents"].append({"role": "user", "parts": [error_response_part]})
+                            continue
+
+                        try:
+                            tool_function = self._tool_functions[tool_name]
+                            print(f"--- Calling Function: {tool_name}({args}) ---")
+                            
+                            # Substitute both stored variables and intermediate results
+                            args = self._substitute_variables(args)
+                            for key, value in args.items():
+                                if isinstance(value, str) and value.startswith('$'):
+                                    result_key = value[1:]
+                                    if result_key in self._intermediate_results:
+                                        args[key] = self._intermediate_results[result_key]
+                            
+                            # Call the function directly - it's already bound if it's a method
+                            function_result = tool_function(**args)
+                            
+                            print(f"--- Function Result: {function_result} ---")
+                            
+                            result_key = f"result_{len(self._intermediate_results)}"
+                            self._intermediate_results[result_key] = function_result
+                            
+                            varaible_name = self.set_variable(result_key, function_result, "the result of function call with name {tool_name} and arguments {args}")
+                            function_response_part = {
+                                "functionResponse": {
+                                    "name": tool_name,
+                                    "response": {
+                                        "content": function_result,
+                                        "key": varaible_name,
+                                        "content_type": type(function_result).__name__
+                                    }
+                                }
+                            }
+
+                            payload["contents"].append({"role": "user", "parts": [{"text": f"the return value of the function stored in the variable {varaible_name}"}]})
+                            
+                            payload["contents"].append({"role": "user", "parts": [function_response_part]})
+
+                        except Exception as e:
+                            print(f"Error executing function {tool_name}: {e}")
+                            error_msg = f"Error during execution of tool '{tool_name}': {e}"
+                            error_response_part = {
+                                "functionResponse": {
+                                    "name": tool_name,
+                                    "response": {"error": error_msg}
+                                }
+                            }
+                            payload["contents"].append({"role": "user", "parts": [error_response_part]})
+                            continue
+
+                    elif "text" in part:
+                        final_text = part["text"]
+                        
+                        if final_mime_type == "application/json" and final_response_schema:
+                            try:
+                                structured_output = json.loads(final_text)
+                                if not any("functionCall" in p for p in content["parts"][content["parts"].index(part) + 1:]):
+                                    return structured_output
+                            except json.JSONDecodeError as e:
+                                print(f"Warning: Failed to parse initially structured output: {e}. Continuing with raw text.")
+
+                        elif apply_structure_later:
+                            if not any("functionCall" in p for p in content["parts"][content["parts"].index(part) + 1:]):
+                                print("--- Attempting final structuring call ---")
+                                formatting_payload = {
+                                    "contents": [
+                                        {"role": "user", "parts": [{"text": f"Please format the following information according to the requested JSON structure:\n\n{final_text}" }]}
+                                    ],
+                                    "generationConfig": {
+                                        "response_mime_type": "application/json",
+                                        "response_schema": response_structure
+                                    }
+                                }
+                                structured_response_data = self._call_gemini_api(formatting_payload)
+
+                                if "error" in structured_response_data:
+                                    print(f"Structuring call failed: {structured_response_data['error']}. Returning intermediate text.")
+                                    return final_text
+
+                                try:
+                                    structured_text = structured_response_data["candidates"][0]["content"]["parts"][0]["text"]
+                                    structured_output = json.loads(structured_text)
+                                    return structured_output
+                                except (KeyError, IndexError, json.JSONDecodeError) as e:
+                                    print(f"Warning: Failed to parse structured output after formatting call: {e}. Returning intermediate text.")
+                                    return final_text
+
+                        elif not any("functionCall" in p for p in content["parts"][content["parts"].index(part) + 1:]):
+                            if response_structure and not apply_structure_later:
+                                print("--- Attempting final structuring call ---")
+                                formatting_payload = {
+                                    "contents": [
+                                        {"role": "user", "parts": [{"text": f"Please format the following information according to the requested JSON structure:\n\n{final_text}" }]}
+                                    ],
+                                    "generationConfig": {
+                                        "response_mime_type": "application/json",
+                                        "response_schema": response_structure
+                                    }
+                                }
+                                structured_response_data = self._call_gemini_api(formatting_payload)
+
+                                if "error" in structured_response_data:
+                                    print(f"Structuring call failed: {structured_response_data['error']}. Returning intermediate text.")
+                                    return final_text
+
+                                try:
+                                    structured_text = structured_response_data["candidates"][0]["content"]["parts"][0]["text"]
+                                    structured_output = json.loads(structured_text)
+                                    return structured_output
+                                except (KeyError, IndexError, json.JSONDecodeError) as e:
+                                    print(f"Warning: Failed to parse structured output after formatting call: {e}. Returning intermediate text.")
+                                    return final_text
+                            return final_text
+      
+                continue
+                
+
+            except (KeyError, IndexError) as e:
+                print(f"Error parsing API response structure: {e}. Response: {response_data}")
+                return {"error": {"message": f"Error parsing API response: {e}", "details": response_data}}
+
+        return {"error": {"message": "Exited interaction loop unexpectedly."}} 

@@ -1,0 +1,69 @@
+site_name: Gemini Agent Framework
+site_description: A Python framework for building agents that use Gemini's function calling capabilities
+site_author: Mohamed Baathman
+repo_url: https://github.com/m7mdony/gemini-agent-framework
+repo_name: m7mdony/gemini-agent-framework
+
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.highlight
+    - search.share
+    - search.suggest
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+markdown_extensions:
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:materialx.emoji.twemoji
+      emoji_generator: !!python/name:materialx.emoji.to_svg
+  - admonition
+  - footnotes
+  - meta
+  - toc:
+      permalink: true
+
+plugins:
+  - search
+  - git-revision-date-localized:
+      type: datetime
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quickstart.md
+  - User Guide:
+    - Basic Usage: user-guide/basic-usage.md
+    - Advanced Usage: user-guide/advanced-usage.md
+    - Best Practices: user-guide/best-practices.md
+  - API Reference:
+    - Agent Class: api-reference/agent.md
+    - Tools: api-reference/tools.md
+    - Variables: api-reference/variables.md
+  - Contributing:
+    - Contributing Guide: contributing/contributing.md
+    - Code of Conduct: contributing/code-of-conduct.md
+    - Changelog: contributing/changelog.md 
