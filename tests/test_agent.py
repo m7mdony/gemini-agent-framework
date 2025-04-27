@@ -1,7 +1,9 @@
-from gemini_agent import Agent
-from dotenv import load_dotenv
 import os
+
 import pytest
+from dotenv import load_dotenv
+
+from gemini_agent import Agent
 
 load_dotenv()
 
