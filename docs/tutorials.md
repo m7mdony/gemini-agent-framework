@@ -205,4 +205,3 @@ def update_state(key: str, value: any) -> None:
 
 1. Explore the [API Reference](api_reference.md) for detailed information about all available features
 2. Check out the [Best Practices](best_practices.md) guide for tips on building robust agents
-3. Join our [Discord community](https://discord.gg/your-discord) for support and discussions 

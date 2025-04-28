@@ -98,5 +98,4 @@ print(response)
 
 If you encounter any issues:
 - Check the [GitHub Issues](https://github.com/m7mdony/gemini-agent-framework/issues)
-- Join our [Discord Community](https://discord.gg/your-discord)
 - Create a new issue with details about your problem 

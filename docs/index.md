@@ -45,15 +45,15 @@ pip install gemini-agent-framework
 
 ## Documentation
 
-- [Getting Started](getting-started/installation.md)
-- [User Guide](user-guide/basic-usage.md)
-- [API Reference](api-reference/agent.md)
-- [Contributing](contributing/contributing.md)
+- [Getting Started](installation.md)
+- [Tutorials](tutorials.md)
+- [Architecture](architecture.md)
+- [Best Practices](best_practices.md)
+- [API Reference](api-reference.md)
 
 ## Support
 
 - [GitHub Issues](https://github.com/m7mdony/gemini-agent-framework/issues)
-- [Discord Community](https://discord.gg/your-discord)
 
 ## License
 
