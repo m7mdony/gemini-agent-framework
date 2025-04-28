@@ -32,6 +32,9 @@ jobs:
           pip install -e ".[dev]"
           pip install mkdocs-material
           pip install mkdocs-git-revision-date-localized-plugin
+          pip install mkdocs-material mkdocs-git-revision-date-localized-plugin
+          pip install mkdocs-material-extensions  # If you still use materialx.emoji
+          pip install mkdocs  # Just to be sure mkdocs is installed
       
       - name: Build documentation
         run: |
