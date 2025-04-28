@@ -53,9 +53,7 @@ plugins:
 
 nav:
   - Home: index.md
-  - Getting Started:
-      - Installation: getting-started/installation.md
-      - Quick Start: getting-started/quickstart.md
+  - Getting Started: getting-started/installation.md
   - Tutorials: tutorials.md
   - Architecture: architecture.md
   - Best Practices: best_practices.md
