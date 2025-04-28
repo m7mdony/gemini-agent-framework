@@ -35,7 +35,19 @@ jobs:
       
       - name: Build documentation
         run: |
+          # Remove any existing site directory
+          rm -rf site/
+          
+          # Build the documentation
           mkdocs build
+          
+          # Check if build was successful
+          if [ ! -d "site" ]; then
+            echo "Error: mkdocs build failed - site directory was not created"
+            exit 1
+          fi
+          
+          # List contents for debugging
           echo "Contents of current directory:"
           ls -la
           echo "Contents of site directory:"
