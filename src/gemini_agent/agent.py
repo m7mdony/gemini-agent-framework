@@ -590,5 +590,4 @@ class Agent:
                 }
 
         return {"error": {"message": "Exited interaction loop unexpectedly."}}
-    def test_agent(self) -> None:
-        print("Testing agent...")
+
