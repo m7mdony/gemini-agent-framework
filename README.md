@@ -90,10 +90,10 @@ For detailed documentation, please visit our [documentation site](https://github
 
 ### Key Topics
 
-- [API Reference](https://github.com/m7mdony/gemini-agent-framework/wiki/API-Reference)
-- [Tutorials](https://github.com/m7mdony/gemini-agent-framework/wiki/Tutorials)
-- [Best Practices](https://github.com/m7mdony/gemini-agent-framework/wiki/Best-Practices)
-- [Architecture Overview](https://github.com/m7mdony/gemini-agent-framework/wiki/Architecture)
+- [API Reference](https://github.com/m7mdony/gemini-agent-framework/API-Reference)
+- [Tutorials](https://github.com/m7mdony/gemini-agent-framework/Tutorials)
+- [Best Practices](https://github.com/m7mdony/gemini-agent-framework/Best-Practices)
+- [Architecture Overview](https://github.com/m7mdony/gemini-agent-framework/Architecture)
 
 ## Contributing
 
