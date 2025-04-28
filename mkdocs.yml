@@ -8,6 +8,7 @@ theme:
   name: material
   features:
     - navigation.tabs
+    - navigation.tabs.sticky
     - navigation.sections
     - navigation.expand
     - navigation.top
@@ -59,7 +60,3 @@ nav:
   - Architecture: architecture.md
   - Best Practices: best_practices.md
   - API Reference: api_reference.md
-  - Contributing:
-    - Contributing Guide: contributing/contributing.md
-    - Code of Conduct: contributing/code-of-conduct.md
-    - Changelog: contributing/changelog.md 
