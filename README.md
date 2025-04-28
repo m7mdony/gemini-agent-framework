@@ -86,11 +86,11 @@ response = agent.prompt(
 
 ## Documentation
 
-For detailed documentation, please visit our [documentation site](https://github.com/m7mdony/gemini-agent-framework/wiki).
+For detailed documentation, please visit our [documentation site](https://github.com/m7mdony/gemini-agent-framework).
 
 ### Key Topics
 
-- [API Reference](https://m7mdony.github.io/gemini-agent-framework/api_refrences/)
+- [API Reference](https://m7mdony.github.io/gemini-agent-framework/api_reference/)
 - [Tutorials](https://m7mdony.github.io/gemini-agent-framework/tutorials/)
 - [Best Practices](https://m7mdony.github.io/gemini-agent-framework/best_practices/)
 - [Architecture Overview](https://m7mdony.github.io/gemini-agent-framework/architecture/)
