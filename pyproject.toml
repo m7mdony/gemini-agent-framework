@@ -30,7 +30,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/m7mdony/gemini-agent-framework"
-Documentation = "https://github.com/m7mdony/gemini-agent-framework/wiki"
+Documentation = "https://m7mdony.github.io/gemini-agent-framework"
 Repository = "https://github.com/m7mdony/gemini-agent-framework.git"
 Issues = "https://github.com/m7mdony/gemini-agent-framework/issues"
 

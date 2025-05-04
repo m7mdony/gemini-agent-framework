@@ -4,8 +4,11 @@ from datetime import datetime
 from functools import wraps
 from typing import Any, Callable, Dict, List, Optional, Type, Union, Collection
 
+
 import requests
 from dotenv import load_dotenv
+
+
 
 load_dotenv()
 
@@ -237,14 +240,7 @@ class Agent:
             ]
         )
 
-        return """You are an AI assistant that can break down complex tasks into sequential steps using available tools.
-        When faced with a complex request:
-        1. Analyze the request to identify which tools can be used
-        2. Break down the request into sequential steps
-        3. For each step:
-           - Use the most appropriate tool
-           - Store the result for use in subsequent steps
-        4. Combine the results to provide a final answer
+        return """
         
         Available tools:
         {tools_list}
@@ -281,11 +277,26 @@ class Agent:
         """Substitutes variable references in arguments with their actual values."""
         result = {}
         for key, value in args.items():
+            print("substituting variables", key, value)
             if isinstance(value, str) and value.startswith("$"):
+                print("is string and starts with $")
+                # Handle $ prefixed variables
                 var_name = value[1:]
                 if var_name in self._stored_variables:
+                    print("substituted")
+
                     result[key] = self._stored_variables[var_name]["value"]
                 else:
+                    result[key] = value
+            elif isinstance(value, dict) and "variable" in value:
+                print("is dict and has variable")
+                # Handle dictionary-style variable references
+                var_name = value["variable"]
+                if var_name in self._stored_variables:
+                    print("substituted")
+                    result[key] = self._stored_variables[var_name]["value"]
+                else:
+                    print("substituted")
                     result[key] = value
             else:
                 result[key] = value
@@ -328,21 +339,17 @@ class Agent:
             system_prompt = self._get_system_prompt() + system_prompt
 
         current_contents = conversation_history if conversation_history else []
-        if system_prompt and not current_contents:
-            current_contents.append({"role": "user", "parts": [{"text": system_prompt}]})
-            current_contents.append(
-                {
-                    "role": "model",
-                    "parts": [
-                        {
-                            "text": "I understand I should break down complex tasks into sequential steps using the available tools and variables."
-                        }
-                    ],
-                }
-            )
+        
+        # Add system instruction to payload
+        payload: Dict[str, Any] = {
+            "system_instruction": {
+                "parts": [{"text": system_prompt}]
+            },
+            "contents": current_contents
+        }
 
-        current_contents.append({"role": "user", "parts": [{"text": user_prompt}]})
-        payload: Dict[str, Any] = {"contents": current_contents}
+        # Add user prompt to contents
+        payload["contents"].append({"role": "user", "parts": [{"text": user_prompt}]})
 
         if self._registered_tools_json:
             payload["tools"] = [{"functionDeclarations": self._registered_tools_json}]
@@ -366,9 +373,9 @@ class Agent:
             }
             final_mime_type = "application/json"
             final_response_schema = response_structure
-
+     
         while True:
-
+           
             response_data = self._call_gemini_api(payload)
             if "error" in response_data:
                 print(
@@ -577,7 +584,6 @@ class Agent:
                                     )
                                     return final_text
                             return final_text
-
                 continue
 
             except (KeyError, IndexError) as e:
