@@ -241,10 +241,7 @@ class Agent:
         )
 
         return """
-        
-        Available tools:
-        {tools_list}
-        
+
         Available variables:
         {variables_list}
         
@@ -333,17 +330,14 @@ class Agent:
         """
         self._intermediate_results = {}
 
-        if not system_prompt:
-            system_prompt = self._get_system_prompt()
-        else:
-            system_prompt = self._get_system_prompt() + system_prompt
+
 
         current_contents = conversation_history if conversation_history else []
         
         # Add system instruction to payload
         payload: Dict[str, Any] = {
             "system_instruction": {
-                "parts": [{"text": system_prompt}]
+                "parts": [{"text": system_prompt if system_prompt else ""},{"text": self._get_system_prompt()}]
             },
             "contents": current_contents
         }
@@ -373,9 +367,9 @@ class Agent:
             }
             final_mime_type = "application/json"
             final_response_schema = response_structure
-     
+      
         while True:
-           
+      
             response_data = self._call_gemini_api(payload)
             if "error" in response_data:
                 print(
