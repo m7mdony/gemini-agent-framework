@@ -299,15 +299,37 @@ class Agent:
                 result[key] = value
         return result
 
-    def _call_gemini_api(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def _call_gemini_api(self, payload: Dict[str, Any], debug_scope: Optional[str] = None) -> Dict[str, Any]:
         """Makes a call to the Gemini API."""
         response = requests.post(
             f"{self.base_url}:generateContent?key={self.api_key}",
             headers=self.headers,
             json=payload,
         )
-        response.raise_for_status()
-        return response.json()
+        response_data = response.json()
+        self._log_text(response_data, debug_scope)
+        
+        if not response.ok:
+            error_details = response_data.get('error', {})
+            error_message = f"Gemini API Error: {error_details.get('message', 'Unknown error')}"
+            if 'details' in error_details:
+                error_message += f"\nDetails: {error_details['details']}"
+            raise requests.exceptions.HTTPError(error_message, response=response)
+            
+        return response_data
+    
+    def _log_json(self, json_data: Dict[str, Any], file_name: str, debug_scope: Optional[str] = None) -> None:
+        """Logs the JSON data to a file."""
+        print("in log json")
+        if "json" not in debug_scope:
+            return
+        with open(file_name, "w") as f:
+            json.dump(json_data, f)
+    def _log_text(self, text: str, debug_scope: Optional[str] = None) -> None:
+        """Logs the text to a file."""
+        if "text" not in debug_scope:
+            return
+        print(text)
 
     def prompt(
         self,
@@ -315,6 +337,7 @@ class Agent:
         system_prompt: Optional[str] = None,
         response_structure: Optional[Dict[str, Any]] = None,
         conversation_history: Optional[List[Dict[str, Any]]] = None,
+        debug_scope: Optional[str] = [],
     ) -> Any:
         """
         Sends a prompt to the Gemini model and processes the response.
@@ -329,7 +352,6 @@ class Agent:
             The model's response, processed according to the response structure if provided
         """
         self._intermediate_results = {}
-
 
 
         current_contents = conversation_history if conversation_history else []
@@ -367,13 +389,16 @@ class Agent:
             }
             final_mime_type = "application/json"
             final_response_schema = response_structure
-      
+        count = 0
         while True:
-      
-            response_data = self._call_gemini_api(payload)
+            self._log_json(payload, f"payload_{count}.json", debug_scope)
+            count += 1
+            response_data = self._call_gemini_api(payload, debug_scope)
+            print("response data " , response_data)
             if "error" in response_data:
-                print(
+                self._log_text(
                     f"API call failed: {response_data['error'].get('message', 'Unknown API error')}"
+                    , debug_scope
                 )
                 return response_data
 
@@ -384,24 +409,26 @@ class Agent:
                 error_msg = f"Request blocked by API. Reason: {block_reason}."
                 if safety_ratings:
                     error_msg += f" Details: {json.dumps(safety_ratings)}"
-                print(error_msg)
+                
+                self._log_text(error_msg, debug_scope)
                 return {"error": {"message": error_msg, "details": feedback}}
-
+            
             try:
                 candidate = response_data["candidates"][0]
                 content = candidate["content"]
 
                 for part in content["parts"]:
-                    payload["contents"].append({"role": "model", "parts": [part]})
+                    
 
                     if "functionCall" in part:
+                        payload["contents"].append({"role": "model", "parts": [part]})
                         fc = part["functionCall"]
                         tool_name = fc["name"]
                         args = fc.get("args", {})
 
                         if tool_name not in self._tool_functions:
                             error_msg = f"Model attempted to call unknown function '{tool_name}'."
-                            print(f"Error: {error_msg}")
+                            self._log_text(f"Error: {error_msg}", debug_scope)
                             error_response_part = {
                                 "functionResponse": {
                                     "name": tool_name,
@@ -415,7 +442,7 @@ class Agent:
 
                         try:
                             tool_function = self._tool_functions[tool_name]
-                            print(f"--- Calling Function: {tool_name}({args}) ---")
+                            self._log_text(f"--- Calling Function: {tool_name}({args}) ---", debug_scope)
 
                             # Substitute both stored variables and intermediate results
                             args = self._substitute_variables(args)
@@ -428,7 +455,7 @@ class Agent:
                             # Call the function directly - it's already bound if it's a method
                             function_result = tool_function(**args)
 
-                            print(f"--- Function Result: {function_result} ---")
+                            self._log_text(f"--- Function Result: {function_result} ---", debug_scope)
 
                             result_key = f"result_{len(self._intermediate_results)}"
                             self._intermediate_results[result_key] = function_result
@@ -465,7 +492,7 @@ class Agent:
                             )
 
                         except Exception as e:
-                            print(f"Error executing function {tool_name}: {e}")
+                            self._log_text(f"Error executing function {tool_name}: {e}", debug_scope)
                             error_msg = f"Error during execution of tool '{tool_name}': {e}"
                             error_response_part = {
                                 "functionResponse": {
@@ -490,8 +517,9 @@ class Agent:
                                 ):
                                     return structured_output
                             except json.JSONDecodeError as e:
-                                print(
-                                    f"Warning: Failed to parse initially structured output: {e}. Continuing with raw text."
+                                self._log_text(
+                                    f"Warning: Failed to parse initially structured output: {e}. Continuing with raw text.",
+                                    debug_scope
                                 )
 
                         elif apply_structure_later:
@@ -499,14 +527,15 @@ class Agent:
                                 "functionCall" in p
                                 for p in content["parts"][content["parts"].index(part) + 1 :]
                             ):
-                                print("--- Attempting final structuring call ---")
+                                self._log_text("--- Attempting final structuring call ---", debug_scope)
+                                # Include the full conversation history in the formatting payload
                                 formatting_payload = {
-                                    "contents": [
+                                    "contents": payload["contents"] + [
                                         {
                                             "role": "user",
                                             "parts": [
                                                 {
-                                                    "text": f"Please format the following information according to the requested JSON structure:\n\n{final_text}"
+                                                    "text": f"Based on our conversation above, please format the following information according to the requested JSON structure:\n\n{final_text}"
                                                 }
                                             ],
                                         }
@@ -516,11 +545,14 @@ class Agent:
                                         "response_schema": response_structure,
                                     },
                                 }
-                                structured_response_data = self._call_gemini_api(formatting_payload)
+                                self._log_json(formatting_payload, f"formatting_payload_{count}.json", debug_scope)
+                                count += 1
+                                structured_response_data = self._call_gemini_api(formatting_payload, debug_scope)
 
                                 if "error" in structured_response_data:
-                                    print(
-                                        f"Structuring call failed: {structured_response_data['error']}. Returning intermediate text."
+                                    self._log_text(
+                                        f"Structuring call failed: {structured_response_data['error']}. Returning intermediate text.",
+                                        debug_scope
                                     )
                                     return final_text
 
@@ -531,8 +563,9 @@ class Agent:
                                     structured_output = json.loads(structured_text)
                                     return structured_output
                                 except (KeyError, IndexError, json.JSONDecodeError) as e:
-                                    print(
-                                        f"Warning: Failed to parse structured output after formatting call: {e}. Returning intermediate text."
+                                    self._log_text(
+                                        f"Warning: Failed to parse structured output after formatting call: {e}. Returning intermediate text.",
+                                        debug_scope
                                     )
                                     return final_text
 
@@ -541,7 +574,7 @@ class Agent:
                             for p in content["parts"][content["parts"].index(part) + 1 :]
                         ):
                             if response_structure and not apply_structure_later:
-                                print("--- Attempting final structuring call ---")
+                                self._log_text("--- Attempting final structuring call ---", debug_scope)
                                 formatting_payload = {
                                     "contents": [
                                         {
@@ -558,11 +591,14 @@ class Agent:
                                         "response_schema": response_structure,
                                     },
                                 }
-                                structured_response_data = self._call_gemini_api(formatting_payload)
+                                self._log_json(formatting_payload, f"formatting_payload_{count}.json", debug_scope)
+                                count += 1
+                                structured_response_data = self._call_gemini_api(formatting_payload, debug_scope)
 
                                 if "error" in structured_response_data:
-                                    print(
+                                    self._log_text(
                                         f"Structuring call failed: {structured_response_data['error']}. Returning intermediate text."
+                                        , debug_scope
                                     )
                                     return final_text
 
@@ -573,15 +609,16 @@ class Agent:
                                     structured_output = json.loads(structured_text)
                                     return structured_output
                                 except (KeyError, IndexError, json.JSONDecodeError) as e:
-                                    print(
-                                        f"Warning: Failed to parse structured output after formatting call: {e}. Returning intermediate text."
+                                    self._log_text(
+                                        f"Warning: Failed to parse structured output after formatting call: {e}. Returning intermediate text.",
+                                        debug_scope
                                     )
                                     return final_text
                             return final_text
                 continue
 
             except (KeyError, IndexError) as e:
-                print(f"Error parsing API response structure: {e}. Response: {response_data}")
+                self._log_text(f"Error parsing API response structure: {e}. Response: {response_data}", debug_scope)
                 return {
                     "error": {
                         "message": f"Error parsing API response: {e}",
