@@ -274,26 +274,20 @@ class Agent:
         """Substitutes variable references in arguments with their actual values."""
         result = {}
         for key, value in args.items():
-            print("substituting variables", key, value)
             if isinstance(value, str) and value.startswith("$"):
-                print("is string and starts with $")
                 # Handle $ prefixed variables
                 var_name = value[1:]
                 if var_name in self._stored_variables:
-                    print("substituted")
 
                     result[key] = self._stored_variables[var_name]["value"]
                 else:
                     result[key] = value
             elif isinstance(value, dict) and "variable" in value:
-                print("is dict and has variable")
                 # Handle dictionary-style variable references
                 var_name = value["variable"]
                 if var_name in self._stored_variables:
-                    print("substituted")
                     result[key] = self._stored_variables[var_name]["value"]
                 else:
-                    print("substituted")
                     result[key] = value
             else:
                 result[key] = value
