@@ -1,4 +1,4 @@
-from agent import Agent
+from gemini_agent import Agent
 import os
 from dotenv import load_dotenv
 import json
@@ -105,7 +105,10 @@ agent.set_variable(
 # Example 1: Count inputs in home page
 print("\nExample 1: Count inputs in home page")
 response = agent.prompt(
-    "How many input tags are in the home page?",
+
+    user_prompt="How many input tags are in the home page?",
+    system_prompt="You are a tool that counts the number of input tags in an HTML page.",
+    debug_scope=["json"],
     response_structure={
         "type": "object",
         "properties": {

@@ -1,0 +1,82 @@
+{
+    "contents": [
+        {
+            "role": "user",
+            "parts": [
+                {
+                    "text": "How many input tags are in the home page?"
+                }
+            ]
+        },
+        {
+            "role": "model",
+            "parts": [
+                {
+                    "functionCall": {
+                        "name": "count_inputs",
+                        "args": {
+                            "html_content": {
+                                "variable": "home_page"
+                            }
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "role": "user",
+            "parts": [
+                {
+                    "text": "the return value of the function stored in the variable result_0"
+                }
+            ]
+        },
+        {
+            "role": "user",
+            "parts": [
+                {
+                    "functionResponse": {
+                        "name": "count_inputs",
+                        "response": {
+                            "content": {
+                                "count": 0,
+                                "input_types": []
+                            },
+                            "key": "result_0",
+                            "content_type": "dict"
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "role": "user",
+            "parts": [
+                {
+                    "text": "Based on our conversation above, please format the following information according to the requested JSON structure:\n\nThere are 0 input tags in the home page."
+                }
+            ]
+        }
+    ],
+    "generationConfig": {
+        "response_mime_type": "application/json",
+        "response_schema": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer"
+                },
+                "input_types": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            },
+            "required": [
+                "count",
+                "input_types"
+            ]
+        }
+    }
+}

@@ -314,7 +314,6 @@ class Agent:
     
     def _log_json(self, json_data: Dict[str, Any], file_name: str, debug_scope: Optional[str] = None) -> None:
         """Logs the JSON data to a file."""
-        print("in log json")
         if "json" not in debug_scope:
             return
         with open(file_name, "w") as f:
@@ -388,7 +387,6 @@ class Agent:
             self._log_json(payload, f"payload_{count}.json", debug_scope)
             count += 1
             response_data = self._call_gemini_api(payload, debug_scope)
-            print("response data " , response_data)
             if "error" in response_data:
                 self._log_text(
                     f"API call failed: {response_data['error'].get('message', 'Unknown API error')}"

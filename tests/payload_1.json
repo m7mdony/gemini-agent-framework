@@ -1,0 +1,90 @@
+{
+    "system_instruction": {
+        "parts": [
+            {
+                "text": "You are a tool that counts the number of input tags in an HTML page."
+            },
+            {
+                "text": "\n\n        Available variables:\n        - home_page: The HTML content of the home page (Type: <class 'str'>)\n        \n        IMPORTANT - Variable Usage:\n        When you need to use a stored variable in a function call, you MUST use the following syntax:\n        - For function arguments: {\"variable\": \"variable_name\"}\n        - For example, if you want to use the 'current_user' variable in a function call:\n          {\"user_id\": {\"variable\": \"current_user\"}}\n        \n        Remember:\n        - Always perform one operation at a time\n        - Use intermediate results from previous steps\n        - If a step requires multiple tools, execute them sequentially\n        - If you're unsure about the next step, explain your reasoning\n        - You can use both stored variables and values from the prompt\n        - When using stored variables, ALWAYS use the {\"variable\": \"variable_name\"} syntax\n        "
+            }
+        ]
+    },
+    "contents": [
+        {
+            "role": "user",
+            "parts": [
+                {
+                    "text": "How many input tags are in the home page?"
+                }
+            ]
+        },
+        {
+            "role": "model",
+            "parts": [
+                {
+                    "functionCall": {
+                        "name": "count_inputs",
+                        "args": {
+                            "html_content": {
+                                "variable": "home_page"
+                            }
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "role": "user",
+            "parts": [
+                {
+                    "text": "the return value of the function stored in the variable result_0"
+                }
+            ]
+        },
+        {
+            "role": "user",
+            "parts": [
+                {
+                    "functionResponse": {
+                        "name": "count_inputs",
+                        "response": {
+                            "content": {
+                                "count": 0,
+                                "input_types": []
+                            },
+                            "key": "result_0",
+                            "content_type": "dict"
+                        }
+                    }
+                }
+            ]
+        }
+    ],
+    "tools": [
+        {
+            "functionDeclarations": [
+                {
+                    "name": "count_inputs",
+                    "description": "Count the number of input tags in an HTML page",
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "html_content": {
+                                "type": "STRING",
+                                "description": "The HTML content to analyze"
+                            }
+                        },
+                        "required": [
+                            "html_content"
+                        ]
+                    }
+                }
+            ]
+        }
+    ],
+    "toolConfig": {
+        "functionCallingConfig": {
+            "mode": "AUTO"
+        }
+    }
+}
