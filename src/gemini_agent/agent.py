@@ -328,7 +328,7 @@ class Agent:
         self,
         user_prompt: str,
         system_prompt: Optional[str] = None,
-        response_structure: Optional[Dict[str, Any]] = None,
+        json_format: bool = False,
         conversation_history: Optional[List[Dict[str, Any]]] = None,
         debug_scope: Optional[str] = [],
     ) -> Any:
@@ -338,14 +338,13 @@ class Agent:
         Args:
             user_prompt: The user's input prompt
             system_prompt: Optional system prompt to override the default
-            response_structure: Optional structure to enforce on the response
+            json_format: If True, response will be formatted as JSON. Default is False (plain text)
             conversation_history: Optional list of previous conversation turns
 
         Returns:
-            The model's response, processed according to the response structure if provided
+            The model's response, formatted as JSON if json_format is True, otherwise plain text
         """
         self._intermediate_results = {}
-
 
         current_contents = conversation_history if conversation_history else []
         
@@ -364,24 +363,10 @@ class Agent:
             payload["tools"] = [{"functionDeclarations": self._registered_tools_json}]
             payload["toolConfig"] = {"functionCallingConfig": {"mode": "AUTO"}}
 
-        apply_structure_later = bool(response_structure) and bool(self._registered_tools_json)
-        final_response_schema = None
-        final_mime_type = None
+        # Don't set JSON formatting initially if tools are available
+        # We'll apply it later after tool calls are completed
+        apply_json_format_later = json_format and bool(self._registered_tools_json)
 
-        if response_structure and not self._registered_tools_json:
-            apply_structure_later = False
-            # If response_structure is a string type, make it more flexible
-            if response_structure.get("type") == "string":
-                response_structure = {
-                    "type": ["string", "object"],
-                    "properties": {"value": {"type": "string"}},
-                }
-            payload["generationConfig"] = {
-                "response_mime_type": "application/json",
-                "response_schema": response_structure,
-            }
-            final_mime_type = "application/json"
-            final_response_schema = response_structure
         count = 0
         while True:
             self._log_json(payload, f"payload_{count}.json", debug_scope)
@@ -410,8 +395,6 @@ class Agent:
                 content = candidate["content"]
 
                 for part in content["parts"]:
-                    
-
                     if "functionCall" in part:
                         payload["contents"].append({"role": "model", "parts": [part]})
                         fc = part["functionCall"]
@@ -500,41 +483,32 @@ class Agent:
                     elif "text" in part:
                         final_text = part["text"]
 
-                        if final_mime_type == "application/json" and final_response_schema:
-                            try:
-                                structured_output = json.loads(final_text)
-                                if not any(
-                                    "functionCall" in p
-                                    for p in content["parts"][content["parts"].index(part) + 1 :]
-                                ):
-                                    return structured_output
-                            except json.JSONDecodeError as e:
-                                self._log_text(
-                                    f"Warning: Failed to parse initially structured output: {e}. Continuing with raw text.",
-                                    debug_scope
-                                )
+                        # Check if there are more function calls coming
+                        has_more_function_calls = any(
+                            "functionCall" in p
+                            for p in content["parts"][content["parts"].index(part) + 1 :]
+                        )
 
-                        elif apply_structure_later:
-                            if not any(
-                                "functionCall" in p
-                                for p in content["parts"][content["parts"].index(part) + 1 :]
-                            ):
-                                self._log_text("--- Attempting final structuring call ---", debug_scope)
-                                # Include the full conversation history in the formatting payload
+                        if not has_more_function_calls:
+                            # If JSON format is requested and we have tools, make a final formatting call
+                            if apply_json_format_later:
+                                self._log_text("--- Making final JSON formatting call ---", debug_scope)
                                 formatting_payload = {
+                                    "system_instruction": {
+                                        "parts": [{"text": system_prompt if system_prompt else ""},{"text": self._get_system_prompt()}]
+                                    },
                                     "contents": payload["contents"] + [
                                         {
                                             "role": "user",
                                             "parts": [
                                                 {
-                                                    "text": f"Based on our conversation above, please format the following information according to the requested JSON structure:\n\n{final_text}"
+                                                    "text": f"Based on our conversation above, please format your response as JSON. Here is the current response: {final_text}"
                                                 }
                                             ],
                                         }
                                     ],
                                     "generationConfig": {
-                                        "response_mime_type": "application/json",
-                                        "response_schema": response_structure,
+                                        "response_mime_type": "application/json"
                                     },
                                 }
                                 self._log_json(formatting_payload, f"formatting_payload_{count}.json", debug_scope)
@@ -543,7 +517,7 @@ class Agent:
 
                                 if "error" in structured_response_data:
                                     self._log_text(
-                                        f"Structuring call failed: {structured_response_data['error']}. Returning intermediate text.",
+                                        f"JSON formatting call failed: {structured_response_data['error']}. Returning raw text.",
                                         debug_scope
                                     )
                                     return final_text
@@ -556,57 +530,24 @@ class Agent:
                                     return structured_output
                                 except (KeyError, IndexError, json.JSONDecodeError) as e:
                                     self._log_text(
-                                        f"Warning: Failed to parse structured output after formatting call: {e}. Returning intermediate text.",
+                                        f"Warning: Failed to parse JSON response after formatting call: {e}. Returning raw text.",
                                         debug_scope
                                     )
                                     return final_text
-
-                        elif not any(
-                            "functionCall" in p
-                            for p in content["parts"][content["parts"].index(part) + 1 :]
-                        ):
-                            if response_structure and not apply_structure_later:
-                                self._log_text("--- Attempting final structuring call ---", debug_scope)
-                                formatting_payload = {
-                                    "contents": [
-                                        {
-                                            "role": "user",
-                                            "parts": [
-                                                {
-                                                    "text": f"Please format the following information according to the requested JSON structure:\n\n{final_text}"
-                                                }
-                                            ],
-                                        }
-                                    ],
-                                    "generationConfig": {
-                                        "response_mime_type": "application/json",
-                                        "response_schema": response_structure,
-                                    },
-                                }
-                                self._log_json(formatting_payload, f"formatting_payload_{count}.json", debug_scope)
-                                count += 1
-                                structured_response_data = self._call_gemini_api(formatting_payload, debug_scope)
-
-                                if "error" in structured_response_data:
-                                    self._log_text(
-                                        f"Structuring call failed: {structured_response_data['error']}. Returning intermediate text."
-                                        , debug_scope
-                                    )
-                                    return final_text
-
+                            elif json_format:
+                                # Direct JSON formatting (no tools involved)
                                 try:
-                                    structured_text = structured_response_data["candidates"][0][
-                                        "content"
-                                    ]["parts"][0]["text"]
-                                    structured_output = json.loads(structured_text)
+                                    structured_output = json.loads(final_text)
                                     return structured_output
-                                except (KeyError, IndexError, json.JSONDecodeError) as e:
+                                except json.JSONDecodeError as e:
                                     self._log_text(
-                                        f"Warning: Failed to parse structured output after formatting call: {e}. Returning intermediate text.",
+                                        f"Warning: Failed to parse JSON response: {e}. Returning raw text.",
                                         debug_scope
                                     )
                                     return final_text
-                            return final_text
+                            else:
+                                # Return plain text response
+                                return final_text
                 continue
 
             except (KeyError, IndexError) as e:

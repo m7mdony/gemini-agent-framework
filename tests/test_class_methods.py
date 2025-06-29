@@ -39,27 +39,6 @@ def test_class_methods():
     # Test using class methods
     response = agent.prompt(
         "Multiply 5 with memory (starting at 0), then add 10 to the result",
-        response_structure={
-            "type": "object",
-            "properties": {
-                "used_functions": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "function_name": {"type": "string"},
-                            "parameters": {
-                                "type": "object",
-                                "properties": {
-                                    "number": {"type": "integer"}
-                                }
-                            }
-                        }
-                    }
-                },
-                "answer": {"type": "string"}
-            }
-        }
     )
     print(response)
 

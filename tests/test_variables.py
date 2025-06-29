@@ -107,16 +107,14 @@ print("\nExample 1: Count inputs in home page")
 response = agent.prompt(
 
     user_prompt="How many input tags are in the home page?",
-    system_prompt="You are a tool that counts the number of input tags in an HTML page.",
-    debug_scope=["json"],
-    response_structure={
-        "type": "object",
-        "properties": {
-            "count": {"type": "integer"},
-            "input_types": {"type": "array", "items": {"type": "string"}}
-        },
-        "required": ["count", "input_types"]
-    }
+    system_prompt=""""You are a tool that counts the number of input tags in an HTML page.
+        make the response in this format
+        {
+        "count": number,
+        "input_types": [input1,input2 ..... ] }
+      
+        """,
+    json_format= True
 )
 print(json.dumps(response, indent=2))
 
@@ -124,13 +122,13 @@ print(json.dumps(response, indent=2))
 print("\nExample 2: Count inputs in login page")
 response = agent.prompt(
     "How many input tags are in this page  "+ login_page,
-    response_structure={
-        "type": "object",
-        "properties": {
-            "count": {"type": "integer"},
-            "input_types": {"type": "array", "items": {"type": "string"}}
-        },
-        "required": ["count", "input_types"]
-    }
+     system_prompt="""
+        make the response in this format
+        {
+        "count": number,
+        "input_types": [input1,input2 ..... ] }
+      
+        """,
+    json_format= True
 )
 print(json.dumps(response, indent=2)) 
