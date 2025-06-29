@@ -120,14 +120,10 @@ agent.set_variable('count', 5, 'Counter')
 
 ### 1. Structured Responses
 
-Define clear response structures:
+Define clear response structures within the prompt then apply them:
 
 ```python
-response_structure = {
-    'result': {'type': 'number', 'description': 'The calculation result'},
-    'steps': {'type': 'array', 'description': 'List of calculation steps'},
-    'explanation': {'type': 'string', 'description': 'Explanation of the calculation'}
-}
+json_format = True
 ```
 
 ### 2. Error Responses

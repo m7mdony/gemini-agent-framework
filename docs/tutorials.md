@@ -136,15 +136,11 @@ def safe_divide(a: float, b: float) -> float:
 ### 2. Using Response Structures
 
 ```python
-response_structure = {
-    'result': {'type': 'number', 'description': 'The calculation result'},
-    'steps': {'type': 'array', 'description': 'List of calculation steps'},
-    'explanation': {'type': 'string', 'description': 'Explanation of the calculation'}
-}
+
 
 response = agent.prompt(
-    "Calculate 15 * 7 and show your work",
-    response_structure=response_structure
+    """Calculate 15 * 7 and show your work respond with {"answer": number}""",
+    json_format=True
 )
 ```
 

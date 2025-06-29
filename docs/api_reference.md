@@ -120,15 +120,10 @@ The framework automatically maps Python types to Gemini JSON schema types:
 
 ## Response Structure
 
-The `response_structure` parameter in the `prompt` method allows you to define the expected structure of the response:
+The `json_format` parameter in the `prompt` method allows you to define the expected structure with in the prompt:
 
 ```python
-response_structure = {
-    "field_name": {
-        "type": "string|number|boolean|array|object",
-        "description": "Optional description"
-    }
-}
+Json_format = True
 ```
 
 ## Error Handling
