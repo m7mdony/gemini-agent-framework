@@ -366,6 +366,12 @@ class Agent:
         # Don't set JSON formatting initially if tools are available
         # We'll apply it later after tool calls are completed
         apply_json_format_later = json_format and bool(self._registered_tools_json)
+        
+        # Set JSON formatting immediately if no tools are involved
+        if json_format and not self._registered_tools_json:
+            payload["generationConfig"] = {
+                "response_mime_type": "application/json"
+            }
 
         count = 0
         while True:
