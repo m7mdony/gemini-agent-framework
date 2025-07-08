@@ -71,3 +71,4 @@ exclude = [".git", "__pycache__", "build", "dist"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/gemini_agent"] 
+packages = ["src/vertex_agent"]
