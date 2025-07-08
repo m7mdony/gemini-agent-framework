@@ -70,5 +70,4 @@ extend-ignore = "E203,W293"
 exclude = [".git", "__pycache__", "build", "dist"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/gemini_agent"] 
-packages = ["src/vertex_agent"]
+packages = ["src/gemini_agent", "src/vertex_agent"] 
