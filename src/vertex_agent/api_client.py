@@ -10,8 +10,8 @@ from google.auth.transport.requests import Request
 
 class APIClient:
     """Handles Google Cloud API authentication and requests."""
-    
-    def __init__(self, key_path: str, model_name: str = "gemini-1.5-flash", region: str = "us-central1"):
+
+    def __init__(self, key_path: str, model_name: str = "gemini-2.0-flash", region: str = "us-central1"):
         self.key_path = key_path
         self.model_name = model_name
         self.region = region
