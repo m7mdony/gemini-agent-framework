@@ -9,13 +9,13 @@ from vertex_agent import Agent
 
 # Router mode
 router_projects = [
-    {
+     {
         "project_id": "long-memory-465714-j2",
-        "key_path": "/home/arete/capstone/gemini-agent-framework/1.json",
+        "key_path": "/home/arete/capstone/1.json",
     },
     {
         "project_id": "browsemate1", 
-        "key_path": "/home/arete/capstone/gemini-agent-framework/2.json",
+        "key_path": "/home/arete/capstone/2.json",
     }
 ]
 
@@ -23,12 +23,11 @@ agent = Agent(
     model_name="gemini-2.0-flash",
     use_router=True,
     router_projects=router_projects,
-    rotation_strategy="least_used"
+    router_debug_mode=True
 )
 
 response = agent.prompt(
-    user_prompt="hello",
+    user_prompt="tell me about yourself",
     system_prompt=" you are a helpful assistant"
 )
-
 print(response)

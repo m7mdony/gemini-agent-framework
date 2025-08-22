@@ -76,3 +76,49 @@ class APIClient:
             raise requests.exceptions.HTTPError(error_message, response=response)
         
         return response_data
+
+
+    def count_payload_tokens(self, payload: Dict[str, Any], config: Optional[Dict[str, Any]] = None) -> int:
+        """Count tokens for a complete payload before sending to LLM."""
+        # Refresh credentials
+        self.creds.refresh(Request())
+        access_token = self.creds.token
+        
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json"
+        }
+        
+        # Handle config overrides
+        model_name = config.get("model_name", self.model_name) if config else self.model_name
+        region = config.get("region", self.region) if config else self.region
+        
+        # Build count tokens URL
+        count_url = (
+            f"https://{region}-aiplatform.googleapis.com/v1/projects/"
+            f"{self.project_id}/locations/{region}/publishers/google/models/"
+            f"{model_name}:countTokens"
+        )
+        
+        # Create count payload with only the parts that affect token count
+        count_payload = {}
+        
+        # Add system instruction if present
+        if "system_instruction" in payload:
+            count_payload["system_instruction"] = payload["system_instruction"]
+        
+        # Add contents
+        if "contents" in payload:
+            count_payload["contents"] = payload["contents"]
+        
+        # Add tools if present (they affect token count)
+        if "tools" in payload:
+            count_payload["tools"] = payload["tools"]
+        
+        response = requests.post(count_url, headers=headers, json=count_payload)
+        
+        if not response.ok:
+            raise requests.exceptions.HTTPError(f"Token count failed: {response.text}")
+        
+        result = response.json()
+        return result.get('totalTokens', 0)
