@@ -12,8 +12,26 @@ from .vertext_routing.payload_operations import payloadOperations
 from .api_client import APIClient
 
 class Agent:
-    """Main Agent class that orchestrates all components with optional rotation."""
-    
+    """Main Agent class that orchestrates all components with optional rotation.
+    Args:
+            tools: List of tool functions to register
+            model_name: Gemini model to use
+            region: Default region (used when router is disabled)
+            key_path: Default key path 
+            key_dict: Default key dictionary (used when connecting without a config file)
+            use_router: Whether to use the Vertex AI rotation manager
+            router_projects: List of project configurations for rotation
+            use_redis: Whether to use Redis for token bucket management
+            redis_url: Redis server URL (None if using host/port or use_redis is False)
+            redis_host: Redis server host (None if using URL or use_redis is False)
+            redis_port: Redis server port (None if using URL or use_redis is False)
+            redis_db: Redis database number (None if using URL or use_redis is False)
+            redis_password: Redis server password (None if using URL or use_redis is False)
+            key_prefix: Redis key prefix for token buckets (None if use_redis is False)
+            router_debug_mode: Whether to enable debug mode for the router
+            router_debug_file_path: File path for router debug logs
+    """
+
     # Expose decorators at class level for backward compatibility
     @staticmethod
     def description(desc: str) -> Callable:
@@ -29,35 +47,22 @@ class Agent:
         model_name: str = "gemini-2.0-flash",
         region: str = "us-central1",
         key_path: str = "",
+        key_dict: Optional[Dict[str, Any]] = None,  
         # Router configuration
         use_router: bool = False,
         router_projects: Optional[List[Dict[str, Any]]] = None,
         use_redis: bool = True,
+        redis_url: Optional[str] = None,
         redis_host: str = 'localhost',
         redis_port: int = 6379,
         redis_db: int = 0,
+        redis_password: Optional[str] = None,
         key_prefix: str = 'token_bucket',
         router_debug_mode: bool = False,
         router_debug_file_path: str = "debug_logs.json"
     ):
-        """
-        Initialize the Agent with all its components.
-        
-        Args:
-            tools: List of tool functions to register
-            model_name: Gemini model to use
-            region: Default region (used when router is disabled)
-            key_path: Default key path (used when router is disabled)
-            use_router: Whether to use the Vertex AI rotation manager
-            router_projects: List of project configurations for rotation
-            use_redis: Whether to use Redis for token bucket management
-            redis_host: Redis server host
-            redis_port: Redis server port
-            redis_db: Redis database number
-            key_prefix: Redis key prefix for token buckets
-            router_debug_mode: Whether to enable debug mode for the router
-            router_debug_file_path: File path for router debug logs
-        """
+        self.key_path = key_path
+        self.key_dict = key_dict
         self.router_debug_mode = router_debug_mode
         self.variable_manager = VariableManager()
         self.tool_processor = ToolProcessor(self.variable_manager)
@@ -67,9 +72,11 @@ class Agent:
         self.router_projects = router_projects if router_projects else []
         self.router = payloadOperations(
             use_redis,
+            redis_url,
             redis_host,
             redis_port,
             redis_db,
+            redis_password,
             key_prefix,
             router_projects=self.router_projects,
             debug_mode=self.router_debug_mode,
@@ -78,12 +85,17 @@ class Agent:
 
         # Initialize API client or router
         if not self.use_router and not self.router_projects:
-            self.api_client = APIClient(key_path, model_name, region)
+            self.api_client = APIClient(self.key_path, self.key_dict, model_name, region)
             self.router = None
         
         if tools:
             self.tool_processor.process_tools(tools)
-    
+
+        # Ensure all router projects have key_path and key_dict
+        for project in self.router_projects:
+            project.setdefault("key_path", "")
+            project.setdefault("key_dict", {})
+
     def set_project(self, key_path: str) -> None:
         """Updates the project configuration (only works when router is disabled)."""
         if self.use_router:
@@ -179,7 +191,7 @@ class Agent:
         
         if self.use_router and self.router_projects:
             # making a temporary API client for input token counting
-            self.temp_api_client = APIClient(key_path=self.router_projects[0]["key_path"],region="us-central1")
+            self.temp_api_client = APIClient(key_path=self.router_projects[0]["key_path"], key_dict=self.router_projects[0]["key_dict"], region="us-central1")
             input_tokens = self.temp_api_client.count_payload_tokens(payload, config)
 
         # Main conversation loop
@@ -193,8 +205,9 @@ class Agent:
                     try:
                         # calling the vertex router for the initial step and processing the request.
                         project_name, region = self.router.main_router(input_tokens)
-                        project_key_path= {item["project_id"]: item["key_path"] for item in self.router_projects}[project_name]
-                        self.api_client = APIClient(key_path=project_key_path, region=region)
+                        project_key_path = {item["project_id"]: item.get("key_path", None) for item in self.router_projects}[project_name]
+                        project_key_dict = {item["project_id"]: item.get("key_dict", None) for item in self.router_projects}[project_name]
+                        self.api_client = APIClient(key_path=project_key_path, key_dict=project_key_dict, region=region)
                         response_data = self.api_client.call_gemini_api(payload, config)
                         print(f"  ✓ Allocated: {project_name} -> {region}")
 
@@ -207,9 +220,45 @@ class Agent:
                         else:
                             print(f"  ✗ Failed to update router for {project_name} in {region}")
                     
-                    except Exception as e:
-                        print(f"  ✗ Failed: {str(e)}")
-                    
+                    except requests.exceptions.HTTPError as e:
+                        if e.response is not None and e.response.status_code == 429:
+                            max_attempts = len(self.router_projects)
+                            attempt = 0
+                            while attempt < max_attempts:
+                                attempt += 1
+                                input_refund_success = self.router.input_refund(input_tokens, project_name, region)
+                                if input_refund_success:
+                                    try:
+                                        self.router.retry_with_next_project(project_name, region)
+                                        print(f"  ✓ Marked {region} in {project_name} as exhausted.")
+
+                                        project_key_path = {item["project_id"]: item.get("key_path", None) for item in self.router_projects}[project_name]
+                                        project_key_dict = {item["project_id"]: item.get("key_dict", None) for item in self.router_projects}[project_name]
+                                        self.api_client = APIClient(key_path=project_key_path, key_dict=project_key_dict, region=region)
+                                        response_data = self.api_client.call_gemini_api(payload, config)
+                                        print(f"  ✓ Allocated: {project_name} -> {region}")
+
+                                        # counting the output tokens and updating the router
+                                        completion_tokens = response_data.get('usageMetadata', {}).get('candidatesTokenCount', 0)
+                                        print(f"Completion tokens used: {completion_tokens}")
+                                        success = self.router.output_calc(completion_tokens, project_name, region)
+                                        if success:
+                                            print(f"  ✓ Updated router with {completion_tokens} tokens for {project_name} in {region}")
+                                        else:
+                                            print(f"  ✗ Failed to update router for {project_name} in {region}")
+                                        break  # Exit the retry loop on success
+                                    except requests.exceptions.HTTPError as e:
+                                        if e.response is not None and e.response.status_code == 429:
+                                            print(f"  ✗ Retry {attempt}/{max_attempts} failed due to rate limit. Trying next project...")
+                                            continue
+                                        else:
+                                            self.debug_logger.log_text(f"API call failed: {e}", debug_scope)
+                                            return {"error": {"message": str(e)}}
+
+                        else:
+                            self.debug_logger.log_text(f"API call failed: {e}", debug_scope)
+                            return {"error": {"message": str(e)}}
+                        
                     if self.router_debug_mode:
                         # Print debug summary
                         print(f"\n=== Debug Summary ===")
@@ -237,6 +286,7 @@ class Agent:
             except Exception as e:
                 self.debug_logger.log_text(f"API call failed: {e}", debug_scope)
                 return {"error": {"message": str(e)}}
+            
             
             # Handle blocked requests
             if not response_data.get("candidates"):

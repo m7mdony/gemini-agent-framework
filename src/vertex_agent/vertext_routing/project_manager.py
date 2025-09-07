@@ -8,13 +8,31 @@ class ProjectManager:
     Automatically switches to next available project when current project's regions are exhausted.
     """
     
-    def __init__(self, use_redis=True, redis_host='localhost', redis_port=6379, redis_db=0, key_prefix='project_manager'):
+    def __init__(self, use_redis=True, redis_url=None, redis_host='localhost', redis_port=6379,
+                 redis_db=0, redis_password=None, key_prefix='token_bucket'):
         self.use_redis = use_redis
         self.key_prefix = key_prefix
+        self.redis_url = redis_url
+        self.redis_host = redis_host
+        self.redis_port = redis_port
+        self.redis_db = redis_db
+        self.redis_password = redis_password
         self.lock = Lock()
         
         if self.use_redis:
-            self.redis_client = redis.Redis(host=redis_host, port=redis_port, db=redis_db, decode_responses=True)
+            # If redis_url is provided, use it; otherwise fall back to host/port/db
+            if redis_url:
+                self.redis_client = redis.Redis.from_url(redis_url, decode_responses=True)
+                
+            else:
+                self.redis_client = redis.Redis(
+                    host=redis_host,
+                    port=redis_port,
+                    db=redis_db,
+                    password=redis_password,
+                    decode_responses=True
+                )
+            
             self.projects_key = f"{self.key_prefix}:projects"
             self.current_project_key = f"{self.key_prefix}:current_project"
             
@@ -35,15 +53,18 @@ class ProjectManager:
         """Add a new project with the given index and name"""
         with self.lock:
             project_key_prefix = f"{self.key_prefix}:project_{project_index}"
-            
-            router = RegionRouter(
-                use_redis=self.use_redis,
-                redis_host=self.redis_client.connection_pool.connection_kwargs['host'] if self.use_redis else 'localhost',
-                redis_port=self.redis_client.connection_pool.connection_kwargs['port'] if self.use_redis else 6379,
-                redis_db=self.redis_client.connection_pool.connection_kwargs['db'] if self.use_redis else 0,
-                key_prefix=project_key_prefix
-            )
-            
+
+            self.region_router = RegionRouter(
+                    use_redis=self.use_redis,
+                    redis_url=self.redis_url,
+                    redis_host=self.redis_host,
+                    redis_port=self.redis_port,
+                    redis_db=self.redis_db,
+                    redis_password=self.redis_password,
+                    key_prefix=project_key_prefix
+                    )
+
+            router = self.region_router
             self.project_routers[project_index] = router
             self.project_names[project_index] = project_name
             self.project_indices[project_name] = project_index
@@ -138,8 +159,8 @@ class ProjectManager:
                 return project_index, self.project_names[project_index], region, bucket
                 
         return None, None, None, None
-    
-    def pick_region_with_fallback(self, tokens_needed=1000, max_project_attempts=None):
+
+    def pick_region_with_fallback(self, tokens_needed=1000, max_project_attempts=None, exclude_indices=None):
         """
         Pick a region with automatic project fallback.
         Tries current project first, then falls back to other projects.
@@ -148,6 +169,8 @@ class ProjectManager:
             max_project_attempts = len(self.project_routers)
             
         tried_projects = set()
+        if exclude_indices is not None:
+            tried_projects.add(exclude_indices)
         attempts = 0
         
         while attempts < max_project_attempts and len(tried_projects) < len(self.project_routers):
@@ -229,7 +252,14 @@ class ProjectManager:
             for project_index, name in self.projects_data.items():
                 if project_index not in self.project_routers:
                     self.add_project(project_index, name)
-    
+
+    def mark_region_exhausted(self, project_index, region):
+        """Mark a region as exhausted by consuming its remaining balance."""
+        if project_index not in self.project_routers:
+            return False
+        return self.project_routers[project_index].exhaust_region(region)
+
+
     def close(self):
         """Close all project routers and Redis connection"""
         for router in self.project_routers.values():

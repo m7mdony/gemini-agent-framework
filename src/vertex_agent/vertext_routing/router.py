@@ -8,14 +8,25 @@ from .token_bucket.local_TB import LocalTokenBucket
 from .token_bucket.redis_TB import RedisTokenBucket
 # -------- Router with Option --------
 class RegionRouter:
-    def __init__(self, use_redis=True, redis_host='localhost', redis_port=6379, redis_db=0, key_prefix='token_bucket'):
+    def __init__(self, use_redis=True, redis_url=None, redis_host='localhost', redis_port=6379,
+                 redis_db=0, redis_password=None, key_prefix='token_bucket'):
         if not use_redis_import:
             use_redis = False
         self.use_redis = use_redis
         self.key_prefix = key_prefix
 
         if self.use_redis:
-            self.redis_client = redis.Redis(host=redis_host, port=redis_port, db=redis_db, decode_responses=True)
+            # If redis_url is provided, use it; otherwise fall back to host/port/db
+            if redis_url:
+                self.redis_client = redis.Redis.from_url(redis_url, decode_responses=True)
+            else:
+                self.redis_client = redis.Redis(
+                    host=redis_host,
+                    port=redis_port,
+                    db=redis_db,
+                    password=redis_password,
+                    decode_responses=True
+                )
             self.round_robin_key = f"{self.key_prefix}:round_robin_index"
             if not self.redis_client.exists(self.round_robin_key):
                 self.redis_client.set(self.round_robin_key, 0)
@@ -78,6 +89,26 @@ class RegionRouter:
 
     def get_all_balances(self):
         return {region: bucket.get_balance() for region, bucket in self.region_buckets.items()}
+
+    def get_region_balance(self, region):
+        """Return remaining token balance for a specific region"""
+        if region not in self.region_buckets:
+            return None
+        return self.region_buckets[region].get_balance()
+    
+    def exhaust_region(self, region):
+        """
+        Deduct all remaining tokens from the given region's bucket,
+        effectively exhausting it until refill.
+        """
+        if region not in self.region_buckets:
+            return False
+
+        balance = self.region_buckets[region].get_balance()
+        if balance > 0:
+            self.region_buckets[region].consume(balance)
+        return True
+
 
     def close(self):
         if self.use_redis and self.redis_client:

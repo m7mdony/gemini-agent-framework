@@ -6,7 +6,9 @@ from datetime import datetime
 import traceback
 
 class payloadOperations:
-    def __init__(self, use_redis=True, redis_host='localhost', redis_port=6379, redis_db=0, key_prefix='token_bucket', router_projects: list[dict[str,any]] = None, debug_mode=False, debug_file_path="debug_logs.json"):
+    def __init__(self, use_redis=True, redis_url=None, redis_host='localhost', redis_port=6379,
+                 redis_db=0, redis_password=None, key_prefix='token_bucket', 
+                 router_projects: list[dict[str,any]] = None, debug_mode=False, debug_file_path="debug_logs.json"):
         """
         Initialize the payload operations with router settings.
         
@@ -44,8 +46,15 @@ class payloadOperations:
             "system_snapshots": []
         }
         
-        self.router = ProjectManager(self.use_redis, self.redis_host, self.redis_port, self.redis_db, self.key_prefix)
-      
+        self.router = ProjectManager(
+            use_redis=self.use_redis,
+            redis_url=redis_url,
+            redis_host=self.redis_host,
+            redis_port=self.redis_port,
+            redis_db=self.redis_db,
+            redis_password=redis_password,
+            key_prefix=self.key_prefix
+        )
         if router_projects:
             self.router_projects = [{"project_id": project["project_id"], "index": i} for i, project in enumerate(router_projects)]
             for project in self.router_projects:
@@ -134,7 +143,7 @@ class payloadOperations:
                     "buffer_tokens": 8_192
                 })
             
-            router_result = self.router.pick_region_with_fallback(payload_tokens)
+            router_result = self.router.pick_region_with_fallback(tokens_needed=payload_tokens)
             
             operation_duration = time.time() - operation_start
             
@@ -177,6 +186,60 @@ class payloadOperations:
                 self._take_system_snapshot("allocation_error")
             
             raise
+
+    def input_refund(self, input_tokens: int, project_name: str, region: str):
+        """
+        Refund unused input tokens back to the specified project and region.
+        :param input_tokens: Number of input tokens actually used.
+        :param project_name: Name of the project to refund tokens to.
+        :param region: Region to refund tokens to.
+        """
+        operation_start = time.time()
+
+        project_index = {item["project_id"]: item["index"] for item in self.router_projects}[project_name]
+
+    # Log refund attempt
+        if self.debug_mode:
+            self._log_debug_info("input_token_refund_attempt", {
+                "input_tokens_used": input_tokens,
+                "max_output_tokens": 8_192,
+                "project_name": project_name,
+                "project_index": project_index,
+                "region": region
+            })
+        
+        # Get balance before refund for comparison
+        balance_before = None
+        if self.debug_mode:
+            project_balances = self.router.get_project_balances(project_index)
+            if project_name in project_balances and region in project_balances[project_name]:
+                balance_before = project_balances[project_name][region]
+
+        refund_success = self.router.refund_tokens_to_project(project_index, region, input_tokens)
+
+        operation_duration = time.time() - operation_start
+            
+        # Get balance after refund
+        balance_after = None
+        if self.debug_mode:
+            project_balances = self.router.get_project_balances(project_index)
+            if project_name in project_balances and region in project_balances[project_name]:
+                balance_after = project_balances[project_name][region]
+
+        # Log refund result
+        if self.debug_mode:
+            self._log_debug_info("input_token_refund_complete", {
+                "refund_success": refund_success,
+                "input_tokens_used": input_tokens,
+                "project_name": project_name,
+                "region": region,
+                "balance_before": balance_before,
+                "balance_after": balance_after,
+                "balance_change": balance_after - balance_before if (balance_before is not None and balance_after is not None) else None,
+                "operation_duration_ms": round(operation_duration * 1000, 2)
+            })
+
+        return refund_success
 
     def output_calc(self, output_tokens: int, project_name: str, region: str):
         """
@@ -324,6 +387,63 @@ class payloadOperations:
             op_type = op.get("operation_type", "unknown")
             counts[op_type] = counts.get(op_type, 0) + 1
         return counts
+    
+    def retry_with_next_project(self, project_name: str, region: str, input_tokens: int):
+        """
+        Mark the given project+region as exhausted, then retry routing with a different project.
+
+        :param project_name: Name of the exhausted project
+        :param region: Region to mark as exhausted for the project
+        :param input_tokens: Number of tokens required
+        :return: Tuple (new_project_name, new_region) if successful, else None
+        """
+        try:
+            # 1. Find project index
+            project_index_map = {item["project_id"]: item["index"] for item in self.router_projects}
+            if project_name not in project_index_map:
+                raise ValueError(f"Project '{project_name}' not found in router_projects.")
+            
+            project_index = project_index_map[project_name]
+
+            # 2. Mark the region as exhausted for this project
+            self.router.mark_region_exhausted(project_index, region)
+
+            # 3. Retry routing, skipping the exhausted project index
+            payload_tokens = input_tokens + 8_192  # same buffer logic
+            router_result = self.router.pick_region_with_fallback(tokens_needed=payload_tokens, exclude_indices={project_index})
+
+            if not router_result:
+                if self.debug_mode:
+                    self._log_debug_info("retry_allocation_failed", {
+                        "exhausted_project": project_name,
+                        "exhausted_region": region,
+                        "input_tokens": input_tokens,
+                        "payload_tokens": payload_tokens
+                    })
+                return None
+
+            # 4. Log retry success
+            if self.debug_mode:
+                self._log_debug_info("retry_allocation_success", {
+                    "previous_project": project_name,
+                    "previous_region": region,
+                    "new_project": router_result['project_name'],
+                    "new_region": router_result['region'],
+                    "project_index": router_result['project_index']
+                })
+
+            return router_result['project_name'], router_result['region']
+
+        except Exception as e:
+            if self.debug_mode:
+                self._log_debug_info("retry_allocation_error", {
+                    "project_name": project_name,
+                    "region": region,
+                    "input_tokens": input_tokens,
+                    "error_message": str(e)
+                }, error=True)
+            raise
+
 
     def close(self):
         """
@@ -335,57 +455,3 @@ class payloadOperations:
         self.router.close()
 
 
-# # --- Demo Usage ---
-# if __name__ == "__main__":
-#     # Example projects
-#     projects = [
-#         {"project_id": "main-project-v1"},
-#         {"project_id": "backup-project-v2"}, 
-#         {"project_id": "emergency-project-v3"}
-#     ]
-    
-#     # Initialize with debugging enabled
-#     payload_ops = payloadOperations(
-#         use_redis=False,  # Use local mode for demo
-#         router_projects=projects,
-#         debug_mode=True,
-#         debug_file_path="payload_operations_debug.json"
-#     )
-    
-#     try:
-#         print("=== Demo: Payload Operations with Debugging ===")
-        
-#         # Test multiple operations
-#         test_cases = [
-#             {"input_tokens": 50000, "actual_output": 2048},
-#             {"input_tokens": 200000, "actual_output": 4096},
-#             {"input_tokens": 800000, "actual_output": 1024},
-#             {"input_tokens": 1500000, "actual_output": 6144}  # This might fail due to capacity
-#         ]
-        
-#         for i, test_case in enumerate(test_cases):
-#             print(f"\nTest Case {i+1}: {test_case['input_tokens']:,} input tokens")
-            
-#             try:
-#                 # Route the request
-#                 project_name, region = payload_ops.main_router(test_case["input_tokens"])
-#                 print(f"  ✓ Allocated: {project_name} -> {region}")
-                
-#                 # Simulate output and refund
-#                 payload_ops.output_calc(test_case["actual_output"], project_name, region)
-#                 print(f"  ✓ Refunded unused tokens (used {test_case['actual_output']} tokens)")
-                
-#             except Exception as e:
-#                 print(f"  ✗ Failed: {str(e)}")
-        
-#         # Print debug summary
-#         print(f"\n=== Debug Summary ===")
-#         summary = payload_ops.get_debug_summary()
-#         for key, value in summary.items():
-#             if key not in ["current_balances", "project_info"]:
-#                 print(f"{key}: {value}")
-                
-#     finally:
-#         # This will automatically save the debug log
-#         payload_ops.close()
-#         print(f"\nDebug log saved. Check 'payload_operations_debug.json' for detailed logs.")

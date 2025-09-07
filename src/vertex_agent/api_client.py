@@ -9,25 +9,37 @@ from google.auth.transport.requests import Request
 
 
 class APIClient:
-    """Handles Google Cloud API authentication and requests."""
+    """Handles Google Cloud API authentication and requests.
+    Attributes:
+        key_path (str): Path to the service account key file.
+        key_dict (Dict[str, Any]): Service account key as a dictionary. None if using key_path.
+        model_name (str): Name of the Gemini model to use.
+        region (str): Google Cloud region.
+        """
 
-    def __init__(self, key_path: str, model_name: str = "gemini-2.0-flash", region: str = "us-central1"):
+    def __init__(self, key_path: str, key_dict: Dict[str, Any], model_name: str = "gemini-2.0-flash", region: str = "us-central1"):
         self.key_path = key_path
+        self.key_dict = key_dict
         self.model_name = model_name
         self.region = region
         self._SCOPES = ["https://www.googleapis.com/auth/cloud-platform"]
         self.headers = {"Content-Type": "application/json"}
-        
-        if not key_path:
-            raise ValueError("API key path is required.")
-        
+
+        if not key_path and not key_dict:
+            raise ValueError("API key path or key dictionary is required.")
+
         self._setup_credentials()
     
     def _setup_credentials(self):
         """Sets up Google Cloud credentials and project info."""
-        self.creds = service_account.Credentials.from_service_account_file(
-            self.key_path, scopes=self._SCOPES
-        )
+        if self.key_path:
+            self.creds = service_account.Credentials.from_service_account_file(
+                self.key_path, scopes=self._SCOPES
+            )
+        elif self.key_dict:
+            self.creds = service_account.Credentials.from_service_account_info(
+                self.key_dict, scopes=self._SCOPES
+            )
         self.project_id = self.creds.project_id
         self.base_url = (
             f"https://{self.region}-aiplatform.googleapis.com/v1/projects/"
